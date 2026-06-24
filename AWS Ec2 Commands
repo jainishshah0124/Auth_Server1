@@ -1,0 +1,148 @@
+AWS_REGION=us-east-1
+COGNITO_USER_POOL_ID=us-east-1_1DBlioctC
+COGNITO_APP_CLIENT_ID=6c9t2kkerqon3rk2nht054mj3k
+COGNITO_DOMAIN=https://us-east-11dblioctc.auth.us-east-1.amazoncognito.com
+COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_1DBlioctC
+JWKS_URI=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_1DBlioctC/.well-known/jwks.json
+
+AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:484279834208:runtime/spring_petclinic_mcp_runtime-U4H1pfGF1A
+AGENTCORE_QUALIFIER=DEFAULT
+GATEWAY_BASE_URL=http://107.23.18.246
+
+
+Launch the EC2 instances, provvide security group inbound 22 for your ip, 80 https all, 442 https all.
+
+create a custom securtiy policy if not present to invoke agentcore runtime
+
+Create IAM role for ec2 and assign that custom policy.
+
+then in EC2 instance settings go to security and modify iam role and provide that new created role so that ec2 now have rights to call agentcore.
+
+Also create a elastic ip address and asiign that to ec2 so that you get static public ip to communicate with ec2.
+
+-- chmod 400 your-key.pem
+
+-- ssh -i your-key.pem ec2-user@YOUR_EC2_PUBLIC_IP
+
+sudo dnf update -y
+sudo dnf install -y git nginx python3 python3-pip python3-devel
+
+sudo dnf install -y docker
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo usermod -aG docker ec2-user
+
+mkdir -p ~/mcp-gateway
+cd ~/mcp-gateway
+python3 -m venv .venv
+source .venv/bin/activate
+
+using touch command and nano create the file and update the file. look for the vscode remote connection settings if you want.
+
+update env variables :
+	AWS_REGION=us-east-1
+	COGNITO_USER_POOL_ID=us-east-1_1DBlioctC
+	COGNITO_APP_CLIENT_ID=6c9t2kkerqon3rk2nht054mj3k
+	COGNITO_DOMAIN=https://us-east-11dblioctc.auth.us-east-1.amazoncognito.com
+	COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_1DBlioctC
+	JWKS_URI=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_1DBlioctC/.well-known/jwks.json
+
+	AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:484279834208:runtime/spring_petclinic_mcp_runtime-U4H1pfGF1A
+	AGENTCORE_QUALIFIER=DEFAULT
+	GATEWAY_BASE_URL=http://107.23.18.246
+
+cd ~/mcp-gateway
+source .venv/bin/activate
+set -a
+source /etc/mcp-gateway/env
+set +a
+
+uvicorn main:app --host 0.0.0.0 --port 8080
+
+Test
+	curl -i http://107.23.18.246:8080/health
+	curl -i http://107.23.18.246:8080/mcp
+	curl -s http://107.23.18.246:8080/.well-known/oauth-protected-resource | jq
+	curl -s http://107.23.18.246:8080/.well-known/oauth-authorization-server | jq
+
+Gateway services :
+
+	sudo nano /etc/systemd/system/mcp-gateway.service
+		==> 
+			[Unit]
+			Description=MCP OAuth Gateway
+			After=network.target
+
+			[Service]
+			User=ec2-user
+			WorkingDirectory=/home/ec2-user/mcp-gateway
+			EnvironmentFile=/etc/mcp-gateway/env
+			ExecStart=/home/ec2-user/mcp-gateway/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
+			Restart=always
+			RestartSec=5
+
+			[Install]
+			WantedBy=multi-user.target
+
+Start gateway service
+	sudo systemctl daemon-reload
+	sudo systemctl enable mcp-gateway
+	sudo systemctl start mcp-gateway
+	sudo systemctl status mcp-gateway
+
+Config nginx reverse proxy
+
+	sudo nano /etc/nginx/conf.d/mcp-gateway.conf
+		==>
+			server {
+			    listen 80;
+			    server_name your-domain.com;
+
+			    location / {
+			        proxy_pass http://127.0.0.1:8080;
+
+			        proxy_http_version 1.1;
+			        proxy_set_header Host $host;
+			        proxy_set_header X-Real-IP $remote_addr;
+			        proxy_set_header X-Forwarded-Proto $scheme;
+			        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+			        proxy_buffering off;
+			        proxy_read_timeout 3600;
+			        proxy_send_timeout 3600;
+			    }
+			}
+
+Start nginx
+
+	sudo nginx -t
+	sudo systemctl enable nginx
+	sudo systemctl restart nginx
+
+Config you domain to point to the elastic ip address ## have not done in practical
+
+Add HTTPS
+
+	sudo dnf install -y certbot python3-certbot-nginx
+
+If no domain in my case then
+
+Install ngrok
+	cd ~
+	curl -L https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -o ngrok.tgz
+	tar -xvzf ngrok.tgz
+	sudo mv ngrok /usr/local/bin/ngrok
+	ngrok version
+
+try ngrok http 80 and it will tell you to instert token get from url mentioned
+	export NGROK_AUTHTOKEN=3EhGmh9whVDL1vNACo11wmrxp0w_2rnHDCf2sXmokMd6jPh5d
+
+ngrok config add-authtoken YOUR_NGROK_AUTHTOKEN
+
+sudo nano /etc/mcp-gateway/env
+	==>
+		update the gateway as now ngrok is your proxy gateway
+
+restart services mcp-gateway
+	sudo systemctl restart mcp-gateway
+	journalctl -u mcp-gateway -f
