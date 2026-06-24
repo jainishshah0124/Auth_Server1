@@ -1,0 +1,80 @@
+source .venv/bin/activate
+uvicorn server:app --host 0.0.0.0 --port 9000
+
+
+curl -i -X POST http://localhost:9000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+
+  curl http://localhost:9000/.well-known/oauth-protected-resource | jq
+
+
+  curl http://localhost:9000/.well-known/oauth-authorization-server | jq
+
+
+
+python3 - << 'PY'
+import secrets, hashlib, base64
+verifier = secrets.token_urlsafe(64)
+challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
+print("CODE_VERIFIER=" + verifier)
+print("CODE_CHALLENGE=" + challenge)
+PY
+
+export CODE_VERIFIER="PbH4KIOv-3ju9k6QnHGbxUAzwo4-d4kKnVOzWPcgG1N9qS1gSBunmMFYb9zyo8-tc0AwClVl-z7wNtceqiVkkA"
+export CODE_CHALLENGE="s-1F6N8JzTmsYanU4LcQinSePY9vYSUoX_YSmolNvco"
+
+
+curl -s -X POST http://localhost:9000/oauth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "manual-test-client",
+    "redirect_uris": ["http://localhost:7777/callback"],
+    "grant_types": ["authorization_code"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none"
+  }' | jq
+
+
+  export CLIENT_ID="client_xxxxx"
+
+
+  open "http://localhost:9000/oauth/authorize?response_type=code&client_id=$CLIENT_ID&redirect_uri=http://localhost:7777/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&scope=mcp:tools&state=abc123&resource=http://localhost:9000/mcp"
+
+
+
+ export AUTH_CODE="code_rYJI7O00kzFPeQ1DbWMRtt5RSYShBi3W"
+
+curl -s -X POST http://localhost:9000/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code" \
+  -d "client_id=$CLIENT_ID" \
+  -d "code=$AUTH_CODE" \
+  -d "redirect_uri=http://localhost:7777/callback" \
+  -d "code_verifier=$CODE_VERIFIER" \
+  -d "resource=http://localhost:9000/mcp" | jq
+  
+
+
+
+
+  export ACCESS_TOKEN="at_xxxxx"
+
+
+  curl -s -X POST http://localhost:9000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}' | jq
+
+
+
+python -m uvicorn server:app --host 0.0.0.0 --port 9000
+
+
+  brew install ngrok/ngrok/ngrok
+ngrok http 9000
+
+
+
+http://127.0.0.1:4040/inspect/http
